@@ -1,7 +1,8 @@
 # relay-ctl
 
 Console utility to control LCUS-series USB/serial relay modules made by
-Shenzhen LC Technology Co.,Ltd from the command line on Linux.
+[Shenzhen LC Technology Co.,Ltd](http://www.chinalctech.com/) from the command
+line on Linux.
 
 Tested on the [LCUS-16](http://www.chinalctech.com/cpzx/Programmer/Relay_Module/863.html)
 16-channel relay module; other LCUS relay modules that use the same serial

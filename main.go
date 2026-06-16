@@ -1,4 +1,5 @@
-// relay-ctl controls a serial relay board (COM port) from the command line.
+// relay-ctl controls LCUS-series serial relay modules (made by Shenzhen LC
+// Technology Co.,Ltd) over a COM port from the command line.
 package main
 
 import (
@@ -98,7 +99,7 @@ func run() int {
 }
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `relay-ctl - control a serial relay board over a COM port
+	fmt.Fprint(os.Stderr, `relay-ctl - control an LCUS serial relay module (Shenzhen LC Technology) over a COM port
 
 Usage:
   relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>]
