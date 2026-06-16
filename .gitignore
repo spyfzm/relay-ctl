@@ -1,4 +1,5 @@
 /relay-ctl-linux-amd64
 /relay-ctl-linux-arm64
 /relay-ctl-linux-armv7
+/SHA256SUMS.txt
 .claude/
