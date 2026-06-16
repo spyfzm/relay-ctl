@@ -81,6 +81,24 @@ func parseChannelStates(text string) []channelState {
 	return states
 }
 
+// readChannelStates sends the read command (0xFF) and returns the channel
+// states reported by the device. It is used both by the read action and to
+// validate requested channels before a write.
+func readChannelStates(port serial.Port) ([]channelState, error) {
+	if _, err := port.Write([]byte{0xFF}); err != nil {
+		return nil, fmt.Errorf("failed to write read command: %w", err)
+	}
+	text, err := readResponse(port, commandTimeout)
+	if err != nil {
+		return nil, err
+	}
+	states := parseChannelStates(text)
+	if len(states) == 0 {
+		return nil, fmt.Errorf("no recognizable channel data in device response")
+	}
+	return states, nil
+}
+
 func normalizeState(s string) string {
 	switch strings.ToLower(s) {
 	case "0", "off":

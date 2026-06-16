@@ -16,12 +16,13 @@ import (
 
 // Exit codes.
 const (
-	exitOK             = 0
-	exitInvalidArgs    = 1
-	exitPortSelection  = 2
-	exitPortOpenError  = 3
-	exitCommandTimeout = 4
-	exitIOError        = 5
+	exitOK              = 0
+	exitInvalidArgs     = 1
+	exitPortSelection   = 2
+	exitPortOpenError   = 3
+	exitCommandTimeout  = 4
+	exitIOError         = 5
+	exitMissingChannels = 6
 )
 
 const commandTimeout = 2000 * time.Millisecond
@@ -43,6 +44,7 @@ func run() int {
 	doFlag := flag.String("do", "", "action: on, off, 1, 0 (case-insensitive), or read")
 	devFlag := flag.String("dev", "", "serial device to use (e.g. /dev/ttyUSB0); auto-detected if omitted")
 	speedFlag := flag.Int("speed", 9600, "serial port baud rate")
+	strictFlag := flag.String("strict", "no", "strict mode (yes/no): with yes, abort without sending anything if any requested channel is absent")
 	flag.Usage = printUsage
 	flag.Parse()
 
@@ -59,6 +61,12 @@ func run() int {
 	}
 
 	act, err := parseAction(*doFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitInvalidArgs
+	}
+
+	strict, err := parseStrict(*strictFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitInvalidArgs
@@ -95,14 +103,14 @@ func run() int {
 	if act == actionRead {
 		return doRead(port, all, channels)
 	}
-	return doWrite(port, all, channels, act == actionOn)
+	return doWrite(port, all, channels, act == actionOn, strict)
 }
 
 func printUsage() {
 	fmt.Fprint(os.Stderr, `relay-ctl - control an LCUS serial relay module (Shenzhen LC Technology) over a COM port
 
 Usage:
-  relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>]
+  relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>] [-strict=<yes|no>]
 
 Flags:
   -ch     required. Channel(s) to control: a number 1-255, a comma-separated
@@ -112,11 +120,17 @@ Flags:
   -dev    optional. Serial device to use, e.g. /dev/ttyUSB0. If omitted, the
           tool tries to auto-detect a single suitable port.
   -speed  optional. Serial baud rate (default 9600).
+  -strict optional (default "no"). Only affects writes to specific channels:
+          the device is first queried (read) to see which relays exist.
+          With "no", commands are sent only to channels that exist and absent
+          ones are reported as a warning. With "yes", if any requested channel
+          is absent, no commands are sent and the tool exits with an error.
 
 Examples:
   relay-ctl -ch=5 -do=on
   relay-ctl -ch=1,2,3 -do=off
   relay-ctl -ch=all -do=on
+  relay-ctl -ch=3,7 -do=on -strict=yes
   relay-ctl -ch=0 -do=read -dev=/dev/ttyUSB0
 `)
 }
@@ -167,22 +181,21 @@ func parseAction(s string) (action, error) {
 	}
 }
 
+func parseStrict(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "no", "n", "false", "0":
+		return false, nil
+	case "yes", "y", "true", "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid -strict value %q: expected yes or no", s)
+	}
+}
+
 func doRead(port serial.Port, all bool, channels []int) int {
-	if _, err := port.Write([]byte{0xFF}); err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to write read command: %v\n", err)
-		return exitIOError
-	}
-
-	text, err := readResponse(port, commandTimeout)
+	states, err := readChannelStates(port)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return exitCommandTimeout
-	}
-
-	states := parseChannelStates(text)
-	if len(states) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no recognizable channel data in device response")
-		return exitIOError
+		return commandErrorCode(err)
 	}
 
 	wanted := map[int]bool{}
@@ -200,37 +213,85 @@ func doRead(port serial.Port, all bool, channels []int) int {
 	return exitOK
 }
 
-func doWrite(port serial.Port, all bool, channels []int, on bool) int {
+func doWrite(port serial.Port, all bool, channels []int, on bool, strict bool) int {
 	if all {
-		cmd := buildCommand(0, on)
-		text, err := sendAndWait(port, cmd)
+		text, err := sendAndWait(port, buildCommand(0, on))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			if strings.HasPrefix(err.Error(), "timeout") {
-				return exitCommandTimeout
-			}
-			return exitIOError
+			return commandErrorCode(err)
 		}
 		fmt.Println(text)
 		return exitOK
 	}
 
-	sortedChannels := append([]int{}, channels...)
-	sort.Ints(sortedChannels)
+	// For specific channels, query the device first (read) so we only drive
+	// relays that actually exist, and can report — or, in strict mode, reject —
+	// channels that are absent.
+	states, err := readChannelStates(port)
+	if err != nil {
+		return commandErrorCode(err)
+	}
+	existing := make(map[int]bool, len(states))
+	for _, st := range states {
+		existing[st.channel] = true
+	}
 
-	for _, ch := range sortedChannels {
-		cmd := buildCommand(ch, on)
-		text, err := sendAndWait(port, cmd)
+	present, missing := partitionChannels(channels, existing)
+
+	if len(missing) > 0 {
+		if strict {
+			fmt.Fprintf(os.Stderr, "error: channel(s) not present on device: %s\n", joinInts(missing))
+			fmt.Fprintln(os.Stderr, "strict mode: no commands sent")
+			return exitMissingChannels
+		}
+		fmt.Fprintf(os.Stderr, "warning: skipping channel(s) not present on device: %s\n", joinInts(missing))
+	}
+
+	if len(present) == 0 {
+		fmt.Fprintln(os.Stderr, "error: none of the requested channels are present on the device")
+		return exitMissingChannels
+	}
+
+	for _, ch := range present {
+		text, err := sendAndWait(port, buildCommand(ch, on))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			if strings.HasPrefix(err.Error(), "timeout") {
-				return exitCommandTimeout
-			}
-			return exitIOError
+			return commandErrorCode(err)
 		}
 		fmt.Println(text)
 	}
 	return exitOK
+}
+
+// partitionChannels splits requested channels into those present on the device
+// and those absent, each returned in ascending order.
+func partitionChannels(requested []int, existing map[int]bool) (present, missing []int) {
+	sorted := append([]int{}, requested...)
+	sort.Ints(sorted)
+	for _, ch := range sorted {
+		if existing[ch] {
+			present = append(present, ch)
+		} else {
+			missing = append(missing, ch)
+		}
+	}
+	return present, missing
+}
+
+func joinInts(nums []int) string {
+	parts := make([]string, len(nums))
+	for i, n := range nums {
+		parts[i] = strconv.Itoa(n)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// commandErrorCode prints err and maps a failed device exchange to the right
+// exit code (timeout vs. generic I/O).
+func commandErrorCode(err error) int {
+	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if strings.HasPrefix(err.Error(), "timeout") {
+		return exitCommandTimeout
+	}
+	return exitIOError
 }
 
 func sendAndWait(port serial.Port, cmd []byte) (string, error) {

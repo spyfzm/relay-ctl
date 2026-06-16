@@ -28,7 +28,7 @@ Connect an LCUS relay module (e.g. the
 over USB/serial, then:
 
 ```
-relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>]
+relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>] [-strict=<yes|no>]
 ```
 
 - `-ch` (required): a channel number `1-255`, a comma-separated list
@@ -38,6 +38,12 @@ relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>]
 - `-dev` (optional): serial device, e.g. `/dev/ttyUSB0`. If omitted, the tool
   tries to auto-detect a single usable port (see below).
 - `-speed` (optional): baud rate, default `9600`.
+- `-strict` (optional): `yes` or `no`, default `no`. Only affects `on`/`off`
+  on **specific** channels (not `all`): the device is first queried to learn
+  which relays exist. With `no`, commands are sent only to the channels that
+  exist and any absent ones are reported as a warning. With `yes`, if any
+  requested channel is absent, no commands are sent and the tool exits with a
+  non-zero code (`6`).
 
 ### Examples
 
@@ -47,6 +53,7 @@ relay-ctl -ch=1,2,3 -do=off         # turn relays 1, 2, 3 off, one at a time
 relay-ctl -ch=all -do=on            # turn every relay on
 relay-ctl -ch=0 -do=read            # print state of all channels
 relay-ctl -ch=3,7 -do=read -dev=/dev/ttyUSB0 -speed=19200
+relay-ctl -ch=2,9 -do=on -strict=yes  # only if BOTH 2 and 9 exist, else error and no writes
 ```
 
 ### Port auto-detection
@@ -68,6 +75,11 @@ When `-dev` is not given, relay-ctl tries, in order:
   `A0 <channel> <0|1> <checksum>`, where `channel` is `0x00` for "all", and
   `checksum` is the sum of the first three bytes mod 256. Waits for the
   device's response before moving on.
+- Before writing to **specific** channels (anything other than `all`), the
+  tool first sends the `0xFF` read command and parses the reply to learn which
+  channels the board actually has. Commands are then sent only to channels
+  that exist; absent channels are reported (a warning by default, or — with
+  `-strict=yes` — an error that aborts before any command is sent).
 - A comma-separated channel list is processed sequentially: each command is
   sent and its response awaited before the next is sent. The port is closed
   only after the last response is received.
@@ -85,3 +97,4 @@ time, an error is printed and the tool exits with a non-zero code.
 | 3    | Failed to open the serial port                         |
 | 4    | Command timed out waiting for a device response        |
 | 5    | I/O error writing to or reading from the port           |
+| 6    | Requested channel(s) not present on the device          |
