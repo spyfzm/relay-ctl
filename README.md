@@ -1,6 +1,11 @@
 # relay-ctl
 
-Console utility to control a serial (COM-port) relay board on Linux.
+Console utility to control LCUS-series USB/serial relay modules made by
+Shenzhen LC Technology Co.,Ltd from the command line on Linux.
+
+Tested on the [LCUS-16](http://www.chinalctech.com/cpzx/Programmer/Relay_Module/863.html)
+16-channel relay module; other LCUS relay modules that use the same serial
+command protocol (see [Protocol](#protocol)) should work as well.
 
 ## Build
 
@@ -16,6 +21,10 @@ Binaries are statically linked (no glibc/musl dependency) and have no runtime
 dependencies — copy one to any Linux machine of matching architecture and run it.
 
 ## Usage
+
+Connect an LCUS relay module (e.g. the
+[LCUS-16](http://www.chinalctech.com/cpzx/Programmer/Relay_Module/863.html))
+over USB/serial, then:
 
 ```
 relay-ctl -ch=<channels> -do=<action> [-dev=<device>] [-speed=<baud>]
