@@ -214,6 +214,15 @@ func doRead(port serial.Port, all bool, channels []int) int {
 }
 
 func doWrite(port serial.Port, all bool, channels []int, on bool, strict bool) int {
+	// Confirm the module is present before sending anything: send 0xFF and
+	// require a channel listing in the reply. This guards every write —
+	// including "all" — and, for specific channels, also tells us which relays
+	// actually exist.
+	states, err := readChannelStates(port)
+	if err != nil {
+		return moduleUnavailable(err)
+	}
+
 	if all {
 		text, err := sendAndWait(port, buildCommand(0, on))
 		if err != nil {
@@ -223,13 +232,6 @@ func doWrite(port serial.Port, all bool, channels []int, on bool, strict bool) i
 		return exitOK
 	}
 
-	// For specific channels, query the device first (read) so we only drive
-	// relays that actually exist, and can report — or, in strict mode, reject —
-	// channels that are absent.
-	states, err := readChannelStates(port)
-	if err != nil {
-		return commandErrorCode(err)
-	}
 	existing := make(map[int]bool, len(states))
 	for _, st := range states {
 		existing[st.channel] = true
@@ -288,6 +290,17 @@ func joinInts(nums []int) string {
 // exit code (timeout vs. generic I/O).
 func commandErrorCode(err error) int {
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if strings.HasPrefix(err.Error(), "timeout") {
+		return exitCommandTimeout
+	}
+	return exitIOError
+}
+
+// moduleUnavailable reports a failed pre-write health check: the module did not
+// return a usable channel listing in response to the 0xFF query. The exit code
+// mirrors commandErrorCode (timeout vs. generic I/O / unrecognized response).
+func moduleUnavailable(err error) int {
+	fmt.Fprintf(os.Stderr, "error: relay module unavailable: %v\n", err)
 	if strings.HasPrefix(err.Error(), "timeout") {
 		return exitCommandTimeout
 	}

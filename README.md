@@ -75,11 +75,13 @@ When `-dev` is not given, relay-ctl tries, in order:
   `A0 <channel> <0|1> <checksum>`, where `channel` is `0x00` for "all", and
   `checksum` is the sum of the first three bytes mod 256. Waits for the
   device's response before moving on.
-- Before writing to **specific** channels (anything other than `all`), the
-  tool first sends the `0xFF` read command and parses the reply to learn which
-  channels the board actually has. Commands are then sent only to channels
-  that exist; absent channels are reported (a warning by default, or — with
-  `-strict=yes` — an error that aborts before any command is sent).
+- Before **any** write (`on`/`off`, including `all`), the tool first sends the
+  `0xFF` read command and parses the reply to confirm the module is present and
+  to learn which channels it has. If the module does not return a channel
+  listing, relay-ctl reports that the module is unavailable and exits without
+  sending any command. For specific channels, commands are then sent only to
+  channels that exist; absent channels are reported (a warning by default, or —
+  with `-strict=yes` — an error that aborts before any command is sent).
 - A comma-separated channel list is processed sequentially: each command is
   sent and its response awaited before the next is sent. The port is closed
   only after the last response is received.
@@ -98,3 +100,7 @@ time, an error is printed and the tool exits with a non-zero code.
 | 4    | Command timed out waiting for a device response        |
 | 5    | I/O error writing to or reading from the port           |
 | 6    | Requested channel(s) not present on the device          |
+
+When the pre-write health check fails (the module is unavailable), the tool
+exits `4` if the device did not respond in time, or `5` if it responded but
+without a usable channel listing.
